@@ -3,6 +3,7 @@ package tanka
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/grafana/tanka/pkg/jsonnet/jpath"
@@ -17,7 +18,7 @@ import (
 // Kubernetes resources are expected at the `data` key of this very type
 type InlineLoader struct{}
 
-func (i *InlineLoader) Load(path string, opts JsonnetOpts) (*v1alpha1.Environment, error) {
+func (i *InlineLoader) Load(path string, opts JsonnetOpts) (envs []*v1alpha1.Environment, err error) {
 	raw, err := EvalJsonnet(path, opts)
 	if err != nil {
 		return nil, err
@@ -28,20 +29,12 @@ func (i *InlineLoader) Load(path string, opts JsonnetOpts) (*v1alpha1.Environmen
 		return nil, err
 	}
 
-	envs, err := extractEnvs(data)
+	extractedEnvs, err := extractEnvs(data)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(envs) > 1 {
-		names := make([]string, 0, len(envs))
-		for _, e := range envs {
-			names = append(names, e.Metadata().Name())
-		}
-		return nil, ErrMultipleEnvs{path, names}
-	}
-
-	if len(envs) == 0 {
+	if len(extractedEnvs) == 0 {
 		return nil, fmt.Errorf("Found no environments in '%s'", path)
 	}
 
@@ -50,23 +43,38 @@ func (i *InlineLoader) Load(path string, opts JsonnetOpts) (*v1alpha1.Environmen
 		return nil, err
 	}
 
-	name, err := filepath.Rel(root, base)
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: Re-serializing the entire env here. This is horribly inefficient
-	envData, err := json.Marshal(envs[0])
+	if !fi.IsDir() {
+		base, err = filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	namespace, err := filepath.Rel(root, base)
 	if err != nil {
 		return nil, err
 	}
 
-	env, err := spec.Parse(envData, name)
-	if err != nil {
-		return nil, err
+	for _, extractedEnv := range extractedEnvs {
+		// TODO: Re-serializing the entire env here. This is horribly inefficient
+		envData, err := json.Marshal(extractedEnv)
+		if err != nil {
+			return nil, err
+		}
+
+		env, err := spec.Parse(envData, namespace)
+		if err != nil {
+			return nil, err
+		}
+		envs = append(envs, env)
 	}
 
-	return env, nil
+	return envs, nil
 }
 
 // extractEnvs filters out any Environment manifests

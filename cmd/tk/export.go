@@ -47,7 +47,7 @@ func exportCmd() *cli.Command {
 			Extension: *extension,
 			Merge:     *merge,
 			Targets:   vars.targets,
-			ParseParallelOpts: tanka.ParseParallelOpts{
+			ParallelOpts: tanka.ParallelOpts{
 				JsonnetOpts: getJsonnetOpts(),
 				Selector:    getLabelSelector(),
 			},
@@ -63,7 +63,7 @@ func exportCmd() *cli.Command {
 				}
 
 				// get absolute path to Environment
-				envs, err := tanka.FindEnvironments(path, opts.ParseParallelOpts.Selector)
+				envs, err := tanka.FindEnvironments(path, opts.ParallelOpts.Selector)
 				if err != nil {
 					return err
 				}
@@ -75,7 +75,7 @@ func exportCmd() *cli.Command {
 			}
 
 			// validate environment
-			jsonnetOpts := opts.ParseParallelOpts.JsonnetOpts
+			jsonnetOpts := opts.ParallelOpts.JsonnetOpts
 			jsonnetOpts.EvalScript = tanka.EnvsOnlyEvalScript
 			_, err := tanka.Load(path, tanka.Opts{JsonnetOpts: jsonnetOpts})
 			if err != nil {

@@ -225,26 +225,18 @@ func envListCmd() *cli.Command {
 	useNames := cmd.Flags().Bool("names", false, "plain names output")
 
 	cmd.Run = func(cmd *cli.Command, args []string) error {
-		var dir string
+		var path string
 		var err error
 		if len(args) == 1 {
-			dir = args[0]
+			path = args[0]
 		} else {
-			dir, err = os.Getwd()
+			path, err = os.Getwd()
 			if err != nil {
 				return nil
 			}
 		}
 
-		stat, err := os.Stat(dir)
-		if err != nil {
-			return err
-		}
-		if !stat.IsDir() {
-			return fmt.Errorf("Not a directory: %s", dir)
-		}
-
-		envs, err := tanka.FindEnvironments(dir, getLabelSelector())
+		envs, err := tanka.FindEnvironments(path, getLabelSelector())
 		if err != nil {
 			return err
 		}

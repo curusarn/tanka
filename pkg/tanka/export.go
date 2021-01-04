@@ -38,7 +38,7 @@ type ExportEnvOpts struct {
 	// optional: only export specified Kubernetes manifests
 	Targets []string
 	// optional: options for parsing Environments
-	ParseParallelOpts ParseParallelOpts
+	ParallelOpts ParallelOpts
 }
 
 func ExportEnvironments(paths []string, to string, opts *ExportEnvOpts) error {
@@ -54,7 +54,12 @@ func ExportEnvironments(paths []string, to string, opts *ExportEnvOpts) error {
 		return fmt.Errorf("Output dir `%s` not empty. Pass --merge to ignore this", to)
 	}
 
-	for _, path := range paths {
+	envs, err := LoadEnvironmentsParallel(paths, opts.ParallelOpts)
+	if err != nil {
+		return err
+	}
+
+	for _, env := range envs {
 		// select targets to export
 		filter, err := process.StrExps(opts.Targets...)
 		if err != nil {
@@ -62,9 +67,7 @@ func ExportEnvironments(paths []string, to string, opts *ExportEnvOpts) error {
 		}
 
 		// get the manifests
-		loaded, err := Load(path, Opts{
-			Filters: filter,
-		})
+		loaded, err := LoadManifests(env, filter)
 		if err != nil {
 			return err
 		}

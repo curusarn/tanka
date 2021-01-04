@@ -15,46 +15,56 @@ import (
 const baseDirIndicator = "main.jsonnet"
 const parallel = 8
 
-// FindBaseDirs searches for possible environments
-func FindBaseDirs(workdir string) (dirs []string, err error) {
-	_, _, _, err = jpath.Resolve(workdir)
+// FindEnvironmentPaths searches for possible environments
+func FindEnvironmentPaths(path string) (paths []string, err error) {
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.IsDir() {
+		// return if path is a file
+		return append(paths, path), nil
+	}
+
+	_, _, _, err = jpath.Resolve(path)
 	if err == jpath.ErrorNoRoot {
 		return nil, err
 	}
 
-	if err := filepath.Walk(workdir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 		if _, err := os.Stat(filepath.Join(path, baseDirIndicator)); err != nil {
 			// missing file, not a valid environment directory
 			return nil
 		}
-		dirs = append(dirs, path)
+		paths = append(paths, path)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	return dirs, nil
+	return paths, nil
 }
 
 // FindEnvironments searches for actual environments
 // ignores directories if no environments are found
-func FindEnvironments(workdir string, selector labels.Selector) (envs []*v1alpha1.Environment, err error) {
-	dirs, err := FindBaseDirs(workdir)
+func FindEnvironments(path string, selector labels.Selector) (envs []*v1alpha1.Environment, err error) {
+	paths, err := FindEnvironmentPaths(path)
 	if err != nil {
 		return nil, err
 	}
-	opts := ParseParallelOpts{
+
+	opts := ParallelOpts{
 		JsonnetOpts: JsonnetOpts{
 			EvalScript: EnvsOnlyEvalScript,
 		},
 		Selector: selector,
 	}
-	envs, err = ParseParallel(dirs, opts)
 
+	envs, err = LoadEnvironmentsParallel(paths, opts)
 	if err != nil {
 		switch err.(type) {
-		case ErrParseParallel:
+		case ErrLoadParallel:
 			// ignore ErrNoEnv errors
-			e := err.(ErrParseParallel)
+			e := err.(ErrLoadParallel)
 			var errors []error
 			for _, err := range e.errors {
 				switch err.(type) {
@@ -65,7 +75,7 @@ func FindEnvironments(workdir string, selector labels.Selector) (envs []*v1alpha
 				}
 			}
 			if len(errors) != 0 {
-				return nil, ErrParseParallel{errors: errors}
+				return nil, ErrLoadParallel{errors}
 			}
 		default:
 			return nil, err
@@ -75,11 +85,13 @@ func FindEnvironments(workdir string, selector labels.Selector) (envs []*v1alpha
 	return envs, nil
 }
 
-// ParseParallel evaluates multiple environments in parallel
-func ParseParallel(paths []string, opts ParseParallelOpts) (envs []*v1alpha1.Environment, err error) {
+// LoadEnvironmentsParallel evaluates multiple environments in parallel
+func LoadEnvironmentsParallel(paths []string, opts ParallelOpts) (envs []*v1alpha1.Environment, err error) {
 	wg := sync.WaitGroup{}
-	envsChan := make(chan parseJob)
+	envsChan := make(chan loadJob)
 	var allErrors []error
+
+	results := make([]*v1alpha1.Environment, 0)
 
 	numParallel := parallel
 	if opts.Parallel > 0 {
@@ -89,22 +101,20 @@ func ParseParallel(paths []string, opts ParseParallelOpts) (envs []*v1alpha1.Env
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs := parseWorker(envsChan)
+			envs, errs := loadWorker(envsChan)
 			if errs != nil {
 				allErrors = append(allErrors, errs...)
+			}
+			if envs != nil {
+				results = append(results, envs...)
 			}
 		}()
 	}
 
-	results := make([]*v1alpha1.Environment, 0, len(paths))
-
 	for _, path := range paths {
-		env := &v1alpha1.Environment{}
-		results = append(results, env)
-		envsChan <- parseJob{
+		envsChan <- loadJob{
 			path: path,
 			opts: opts.JsonnetOpts,
-			env:  env,
 		}
 	}
 	close(envsChan)
@@ -120,29 +130,29 @@ func ParseParallel(paths []string, opts ParseParallelOpts) (envs []*v1alpha1.Env
 	}
 
 	if len(allErrors) != 0 {
-		return envs, ErrParseParallel{errors: allErrors}
+		return envs, ErrLoadParallel{errors: allErrors}
 	}
 
 	return envs, nil
 }
 
-type parseJob struct {
+type loadJob struct {
 	path string
 	opts JsonnetOpts
 	env  *v1alpha1.Environment
 }
 
-func parseWorker(envsChan <-chan parseJob) (errs []error) {
+func loadWorker(envsChan <-chan loadJob) (envs []*v1alpha1.Environment, errs []error) {
 	for req := range envsChan {
-		loaded, err := Load(req.path, Opts{JsonnetOpts: req.opts})
+		loaded, err := LoadEnvironments(req.path, Opts{JsonnetOpts: req.opts})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s:\n %w", req.path, err))
 			continue
 		}
-		*req.env = *loaded.Env
+		envs = append(envs, loaded...)
 	}
 	if len(errs) != 0 {
-		return errs
+		return envs, errs
 	}
-	return nil
+	return envs, nil
 }

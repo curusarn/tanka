@@ -18,7 +18,7 @@ var workflowArgs = cli.Args{
 			return nil
 		}
 
-		dirs, err := tanka.FindBaseDirs(pwd)
+		dirs, err := tanka.FindEnvironmentPaths(pwd)
 		if err != nil {
 			return nil
 		}
